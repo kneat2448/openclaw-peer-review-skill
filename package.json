@@ -8,7 +8,8 @@
     "dev": "node --watch src/server.js",
     "smoke": "node scripts/smoke-test.js",
     "test:dashboard": "node scripts/test-dashboard-team.js",
-    "test:cadence": "node scripts/test-cadence.js"
+    "test:cadence": "node scripts/test-cadence.js",
+    "test:onboarding": "node scripts/test-onboarding.js"
   },
   "dependencies": {
     "better-sqlite3": "^11.8.1",

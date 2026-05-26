@@ -5,14 +5,14 @@ fail() { echo "SECURITY CHECK FAILED: $*" >&2; exit 1; }
 warn() { echo "WARN: $*" >&2; }
 
 # Files that must never be committed
-for f in .env data/peer_review.db data/peer_review.db-wal data/peer_review.db-shm; do
+for f in .env data/company_profile.json data/peer_review.db data/peer_review.db-wal data/peer_review.db-shm; do
   if git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
     fail "$f is tracked by git"
   fi
 done
 
 # Ensure ignore rules exist
-for pattern in ".env" "node_modules/" "data/*.db" "data/*.db-wal" "data/*.db-shm" "dashboard/public/data/*.json" "logs/"; do
+for pattern in ".env" "node_modules/" "data/company_profile.json" "data/*.db" "data/*.db-wal" "data/*.db-shm" "dashboard/public/data/*.json" "logs/"; do
   grep -qxF "$pattern" .gitignore || fail ".gitignore missing: $pattern"
 done
 

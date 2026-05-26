@@ -20,7 +20,8 @@ scripts/
 dashboard/
   index.html      Dashboard frontend
 data/
-  team_members.json Example roster; add Telegram IDs here
+  company_profile.example.json Example company onboarding profile
+  team_members.json Example roster; bot onboarding rewrites this locally
 skills/
   peer-review-telegram/ OpenClaw skill package and migration docs
 ```
@@ -28,6 +29,7 @@ skills/
 ## Features
 
 - One-message project creation flow in Telegram.
+- First-run Telegram onboarding for company profile and team roster setup.
 - One-message 15-question review questionnaire per reviewee.
 - SQLite persistence for projects, schedules, responses, results, reviewer sessions, and send logs.
 - Persistent reviewer state: reviewers can resume after process restarts.
@@ -81,7 +83,19 @@ Never commit `.env`.
 
 ## Team roster
 
-Edit `data/team_members.json`:
+On first `/start`, the configured tech lead is asked for company and team information.
+The onboarding reply writes:
+
+- `data/company_profile.json` for local company/team defaults
+- `data/team_members.json` for the reusable roster
+
+You can rerun onboarding any time in Telegram:
+
+```text
+setup company
+```
+
+Manual roster format in `data/team_members.json`:
 
 ```json
 [
@@ -103,6 +117,8 @@ Only `TECH_LEAD_USER_ID` can use project-control commands.
 ```text
 /start
 create project
+setup company
+company profile
 projects
 start review [project name or number]
 status [project name or number]
@@ -114,17 +130,18 @@ If no project argument is provided, the latest project is used.
 
 ## Review flow
 
-1. Tech lead sends `create project`.
-2. Bot replies with a project setup template.
-3. Tech lead fills all fields in one message.
-4. Review dates are computed from duration + cadence.
-5. At schedule time, or when tech lead sends `start review`, reviewers receive a DM.
-6. Reviewer replies `yes` to start or `later` to snooze.
-7. Reviewer gets a 15-question numbered questionnaire for each teammate.
-8. Reviewer replies once with answers `1:` through `15:`.
-9. Bot validates answers, stores them, and moves to the next teammate.
-10. Tech lead runs `analyze reviews`.
-11. Dashboard URL is returned.
+1. Tech lead sends `/start` and completes company/team onboarding if needed.
+2. Tech lead sends `create project`.
+3. Bot replies with a project setup template using the saved company/team defaults.
+4. Tech lead fills all fields in one message.
+5. Review dates are computed from duration + cadence.
+6. At schedule time, or when tech lead sends `start review`, reviewers receive a DM.
+7. Reviewer replies `yes` to start or `later` to snooze.
+8. Reviewer gets a 15-question numbered questionnaire for each teammate.
+9. Reviewer replies once with answers `1:` through `15:`.
+10. Bot validates answers, stores them, and moves to the next teammate.
+11. Tech lead runs `analyze reviews`.
+12. Dashboard URL is returned.
 
 ## Dashboard
 
@@ -151,6 +168,7 @@ node scripts/check-env.js
 node --check src/bot.js
 node --check src/server.js
 npm run test:cadence
+npm run test:onboarding
 npm run test:dashboard
 npm run smoke
 bash scripts/security-check.sh
@@ -198,6 +216,7 @@ To migrate this feature into another OpenClaw instance, copy or clone this repo,
 ## Security and privacy
 
 - `.env` is ignored and must never be committed.
+- `data/company_profile.json` is ignored because it contains local company/team setup.
 - SQLite DB files are ignored by default.
 - Generated dashboard JSON is ignored by default.
 - Sensitive project setup fields are stored in `project_sensitive_data` and excluded from dashboard output.

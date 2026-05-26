@@ -32,12 +32,15 @@ src/
 scripts/
   check-env.js    — validates required env vars at startup
   smoke-test.js   — end-to-end smoke test
+  test-onboarding.js — onboarding parser test
   test-cadence.js — review date scheduling unit tests
   test-dashboard-team.js — dashboard analysis integration test
 dashboard/
   index.html      — single-page dashboard frontend
   public/data/    — generated per-project JSON files
 data/
+  company_profile.json — local company/team onboarding output, ignored by git
+  company_profile.example.json — example company/team profile
   team_members.json — team roster with Telegram IDs
 ecosystem.config.cjs — pm2 config for persistent deployment
 .env.example
@@ -50,12 +53,13 @@ Do not copy `data/peer_review.db*` unless preserving existing history.
 ## Standard workflow
 
 1. Read `references/setup.md` for install/migration steps.
-2. Inspect `.env`, `data/team_members.json`, and `src/bot.js` before changing anything.
+2. Inspect `.env`, `data/company_profile.json`, `data/team_members.json`, and `src/bot.js` before changing anything.
 3. After any code change, run:
 
 ```bash
 node --check src/bot.js
 npm run test:cadence
+npm run test:onboarding
 npm run test:dashboard
 npm run smoke
 ```
@@ -68,6 +72,8 @@ npm run smoke
 Only `TECH_LEAD_USER_ID` can use these:
 
 - `create project` — sends one-message project setup template
+- `setup company` — reruns company/team onboarding and rewrites `data/team_members.json`
+- `company profile` — shows saved company/team summary
 - `projects` — lists all projects with status
 - `start review [name or number]` — sends reviews for a specific project
 - `analyze reviews [name or number]` — runs analysis, updates dashboard
@@ -79,18 +85,21 @@ All commands that take a project accept: project name (partial match), project n
 
 ## Review flow
 
-1. Tech lead sends `create project` → bot sends one-message setup template.
-2. Tech lead fills all fields and replies → project + schedule saved to SQLite.
-3. At scheduled time or `start review` → bot DMs each real team member asking "yes / later".
-4. Reviewer replies "yes" → bot sends a single 15-question questionnaire.
-5. Reviewer replies with all answers in one message (numbered `1:` through `15:`).
-6. Bot validates, stores, moves to next teammate, or marks complete.
-7. Tech lead sends `analyze reviews` → scores computed, dashboard JSON written.
-8. Dashboard served at `BASE_URL/dashboard/<project_id>`.
+1. Tech lead sends `/start`; if company/team setup is missing, bot asks for onboarding in one message.
+2. Onboarding writes `data/company_profile.json` and rewrites `data/team_members.json`.
+3. Tech lead sends `create project` → bot sends one-message setup template using saved defaults.
+4. Tech lead fills all fields and replies → project + schedule saved to SQLite.
+5. At scheduled time or `start review` → bot DMs each real team member asking "yes / later".
+6. Reviewer replies "yes" → bot sends a single 15-question questionnaire.
+7. Reviewer replies with all answers in one message (numbered `1:` through `15:`).
+8. Bot validates, stores, moves to next teammate, or marks complete.
+9. Tech lead sends `analyze reviews` → scores computed, dashboard JSON written.
+10. Dashboard served at `BASE_URL/dashboard/<project_id>`.
 
 ## Key behaviors
 
 - **Session persistence**: reviewer sessions stored in `reviewer_sessions` DB table — survive process restarts.
+- **First-run onboarding**: `/start` prompts the tech lead for company info and team roster when setup is missing.
 - **Send failure handling**: per-reviewer try/catch; failures logged to `review_send_log`; tech lead notified of unreachable members.
 - **Multi-project**: all commands accept project name or number; `projects` lists all.
 - **Partial answer preservation**: on validation failure, valid answers pre-fill the re-sent questionnaire.

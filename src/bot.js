@@ -1,5 +1,6 @@
 import { Bot } from 'grammy';
 import fs from 'node:fs';
+import path from 'node:path';
 import { db, makeProjectId, nowIso } from './db.js';
 import { analyzeProject } from './analysis.js';
 import { createProjectCronJobs, schedulePendingJobs } from './scheduler.js';
@@ -8,12 +9,23 @@ import { createProjectCronJobs, schedulePendingJobs } from './scheduler.js';
 // Review sessions are persisted in DB (reviewer_sessions table).
 const sessions = new Map();
 const savedTeamPath = './data/team_members.json';
+const companyProfilePath = './data/company_profile.json';
 
 // How long after "later" before we send a reminder (default 4 hours).
 const LATER_REMIND_MS = Number(process.env.LATER_REMIND_MS || 4 * 60 * 60 * 1000);
 
 function isTechLead(userId) {
   return String(userId) === String(process.env.TECH_LEAD_USER_ID);
+}
+
+function readJsonFile(filePath, fallback = null) {
+  if (!fs.existsSync(filePath)) return fallback;
+  return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+}
+
+function writeJsonFile(filePath, value) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`);
 }
 
 // Fix: accept bare numbers, x/10, x out of 10, "eight" not accepted intentionally
@@ -278,6 +290,145 @@ function roleCriticality(role) {
   return /operations|sde 2|lead|manager/i.test(role) ? 'high' : 'medium';
 }
 
+function loadCompanyProfile() {
+  return readJsonFile(companyProfilePath, null);
+}
+
+function onboardingComplete() {
+  const profile = loadCompanyProfile();
+  const roster = loadSavedTeamMembers();
+  return Boolean(profile?.company_name && profile?.team_name && roster?.length);
+}
+
+function onboardingPrompt() {
+  return `Welcome. Before creating projects, send your company and team setup in one message.
+
+Copy this template:
+
+Company name:
+Industry:
+Company size:
+Team name:
+Default review cadence: end
+Team members:
+- Name | Role | Years experience | Telegram user ID optional | Responsibilities optional
+- Name | Role | Years experience | Telegram user ID optional | Responsibilities optional
+
+Example:
+Company name: Acme Labs
+Industry: SaaS
+Company size: 10-50
+Team name: Platform
+Default review cadence: halfway and end
+Team members:
+- Asha Rao | SDE 2 | 3 | 123456789 | Backend delivery and code reviews
+- Karan Mehta | Operations | 4 | | Release coordination
+
+Each Telegram user ID is optional, but reviewers must have one and must send /start to this bot before reviews can be delivered.`;
+}
+
+function parseOnboardingMember(line) {
+  const cleaned = line.replace(/^[-*]\s*/, '').trim();
+  if (!cleaned) return null;
+  const parts = cleaned.split('|').map((part) => part.trim());
+  if (parts.length < 3) return { error: `Use: Name | Role | Years | Telegram ID optional | Responsibilities optional (${cleaned})` };
+
+  const [name, role, yearsText, telegramUserId, responsibilities] = parts;
+  const yearsMatch = String(yearsText || '').match(/\d+(?:\.\d+)?/);
+  if (!name || !role || !yearsMatch) return { error: `Missing name, role, or years for: ${cleaned}` };
+
+  const member = {
+    name,
+    role,
+    experience_years: Number(yearsMatch[0])
+  };
+  if (telegramUserId && /^\d+$/.test(telegramUserId)) member.telegram_user_id = telegramUserId;
+  if (responsibilities) member.expected_responsibilities = responsibilities;
+  return { member };
+}
+
+export function parseOnboardingSetup(text) {
+  const fieldAliases = new Map([
+    ['company name', 'company_name'], ['company', 'company_name'],
+    ['industry', 'industry'],
+    ['company size', 'company_size'], ['size', 'company_size'],
+    ['team name', 'team_name'], ['team', 'team_name'],
+    ['default review cadence', 'default_review_cadence'], ['review cadence', 'default_review_cadence'],
+    ['team members', 'team_members_text'], ['members', 'team_members_text']
+  ]);
+  const answers = {};
+  let currentKey = null;
+  for (const rawLine of text.split('\n')) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const match = line.match(/^([^:]+):\s*(.*)$/);
+    if (match) {
+      const key = fieldAliases.get(match[1].trim().toLowerCase());
+      if (key) {
+        currentKey = key;
+        answers[key] = match[2].trim();
+        continue;
+      }
+    }
+    if (currentKey) answers[currentKey] = `${answers[currentKey] ? `${answers[currentKey]}\n` : ''}${line}`.trim();
+  }
+
+  const missing = [
+    ['company_name', 'Company name'],
+    ['industry', 'Industry'],
+    ['team_name', 'Team name'],
+    ['team_members_text', 'Team members']
+  ].filter(([key]) => !answers[key]?.trim()).map(([, label]) => label);
+
+  const members = [];
+  const memberErrors = [];
+  for (const line of String(answers.team_members_text || '').split('\n')) {
+    const parsed = parseOnboardingMember(line);
+    if (!parsed) continue;
+    if (parsed.error) memberErrors.push(parsed.error);
+    else members.push(parsed.member);
+  }
+  if (!members.length) missing.push('At least one team member');
+
+  return {
+    profile: {
+      company_name: answers.company_name,
+      industry: answers.industry,
+      company_size: answers.company_size || '',
+      team_name: answers.team_name,
+      default_review_cadence: answers.default_review_cadence || 'end'
+    },
+    members,
+    errors: [...missing, ...memberErrors]
+  };
+}
+
+function saveOnboardingSetup(profile, members) {
+  const existing = loadCompanyProfile();
+  const timestamp = nowIso();
+  writeJsonFile(companyProfilePath, {
+    ...profile,
+    created_at: existing?.created_at || timestamp,
+    updated_at: timestamp
+  });
+  writeJsonFile(savedTeamPath, members);
+}
+
+function onboardingSummary(profile, members) {
+  return [
+    `Onboarding saved for ${profile.company_name}.`,
+    `Team: ${profile.team_name}`,
+    `Members: ${members.length}`,
+    `Default review cadence: ${profile.default_review_cadence}`,
+    '',
+    'Next commands:',
+    '- create project',
+    '- projects',
+    '- company profile',
+    '- setup company'
+  ].join('\n');
+}
+
 function parseTeamMemberNames(text) {
   const roster = loadSavedTeamMembers();
   if (!roster?.length) return { members: null, missing: [], roster: [] };
@@ -295,8 +446,7 @@ function parseTeamMemberNames(text) {
 }
 
 function loadSavedTeamMembers() {
-  if (!fs.existsSync(savedTeamPath)) return null;
-  return JSON.parse(fs.readFileSync(savedTeamPath, 'utf8'));
+  return readJsonFile(savedTeamPath, null);
 }
 
 function insertTeamMembers(projectId, members) {
@@ -328,6 +478,18 @@ function projectSetupPrompt() {
     ? saved.map((m) => `- ${m.name} — ${m.role}, ${m.experience_years}y${m.telegram_user_id ? `, Telegram: ${m.telegram_user_id}` : ''}`).join('\n')
     : 'No saved roster found.';
   return `Send the project details in one message. You can copy this template:\n\nProject name: \nProject brief: \nExpectations / success criteria: \nDuration: \nReview cadence: \nTeam members: \nReporting / point of contact: \nExpected responsibilities: \nContracts: none\nOffers / commercial commitments: none\nTerms / constraints: none\n\nSaved roster:\n${savedText}\n\nFor team members, send names from the saved roster, comma-separated, or "all". Expected responsibilities is optional — describe what each member is accountable for.`;
+}
+
+function onboardingAwareProjectSetupPrompt() {
+  const saved = loadSavedTeamMembers();
+  const profile = loadCompanyProfile();
+  const savedText = saved?.length
+    ? saved.map((m) => `- ${m.name} - ${m.role}, ${m.experience_years}y${m.telegram_user_id ? `, Telegram: ${m.telegram_user_id}` : ''}`).join('\n')
+    : 'No saved roster found.';
+  const companyText = profile
+    ? `Company: ${profile.company_name}\nTeam: ${profile.team_name}\nDefault cadence: ${profile.default_review_cadence || 'end'}\n\n`
+    : '';
+  return `Send the project details in one message. You can copy this template:\n\n${companyText}Project name: \nProject brief: \nExpectations / success criteria: \nDuration: \nReview cadence: ${profile?.default_review_cadence || ''}\nTeam members: all\nReporting / point of contact: \nExpected responsibilities: \nContracts: none\nOffers / commercial commitments: none\nTerms / constraints: none\n\nSaved roster:\n${savedText}\n\nFor team members, send names from the saved roster, comma-separated, or "all". To update the roster, send: setup company.`;
 }
 
 function parseLabeledProjectSetup(text) {
@@ -504,10 +666,20 @@ export function createBot() {
 
   // --- Commands ---
 
-  bot.command(['start', 'help'], async (ctx) => {
+  bot.command('start', async (ctx) => {
     const userId = ctx.from?.id;
     if (!isTechLead(userId)) return reply(ctx, 'This MVP only accepts project-control commands from the configured tech lead.');
-    return reply(ctx, 'Peer Review MVP ready.\n\nCommands:\n- create project\n- start review [project name or number]\n- analyze reviews [project name or number]\n- dashboard [project name or number]\n- status [project name or number]\n- projects');
+    if (!onboardingComplete()) {
+      sessions.set(String(userId), { mode: 'onboarding', step: 'company_setup' });
+      return reply(ctx, onboardingPrompt());
+    }
+    return reply(ctx, 'Peer Review MVP ready.\n\nCommands:\n- create project\n- setup company\n- company profile\n- start review [project name or number]\n- analyze reviews [project name or number]\n- dashboard [project name or number]\n- status [project name or number]\n- projects');
+  });
+
+  bot.command('help', async (ctx) => {
+    const userId = ctx.from?.id;
+    if (!isTechLead(userId)) return reply(ctx, 'This MVP only accepts project-control commands from the configured tech lead.');
+    return reply(ctx, 'Peer Review MVP ready.\n\nCommands:\n- create project\n- setup company\n- company profile\n- start review [project name or number]\n- analyze reviews [project name or number]\n- dashboard [project name or number]\n- status [project name or number]\n- projects');
   });
 
   bot.on('message:text', async (ctx) => {
@@ -519,17 +691,39 @@ export function createBot() {
     const reviewState = loadReviewerSession(userId);
     if (reviewState) return handleReview(ctx, reviewState, bot);
 
-    // In-memory create_project state
+    // In-memory setup states
     const state = sessions.get(userId);
+    if (state?.mode === 'onboarding') return handleOnboarding(ctx);
     if (state?.mode === 'create_project') return handleCreateProject(ctx, state);
 
     if (!isTechLead(userId)) {
       return reply(ctx, 'This MVP is currently limited to the configured tech lead.');
     }
 
+    if (!onboardingComplete() && !['setup company', 'company setup', 'team setup', 'onboarding', 'company profile'].includes(lower)) {
+      sessions.set(userId, { mode: 'onboarding', step: 'company_setup' });
+      return reply(ctx, onboardingPrompt());
+    }
+
+    if (['setup company', 'company setup', 'team setup', 'onboarding'].includes(lower)) {
+      sessions.set(userId, { mode: 'onboarding', step: 'company_setup' });
+      return reply(ctx, onboardingPrompt());
+    }
+
+    if (lower === 'company profile') {
+      const profile = loadCompanyProfile();
+      const roster = loadSavedTeamMembers() || [];
+      if (!profile) return reply(ctx, 'No company profile found yet. Send: setup company');
+      return reply(ctx, `${profile.company_name}\nTeam: ${profile.team_name}\nIndustry: ${profile.industry || 'Not set'}\nCompany size: ${profile.company_size || 'Not set'}\nDefault review cadence: ${profile.default_review_cadence || 'end'}\nMembers: ${roster.length}`);
+    }
+
     if (['create project', 'project start', 'start project'].includes(lower)) {
+      if (!onboardingComplete()) {
+        sessions.set(userId, { mode: 'onboarding', step: 'company_setup' });
+        return reply(ctx, `Company/team onboarding is required before creating projects.\n\n${onboardingPrompt()}`);
+      }
       sessions.set(userId, { mode: 'create_project', step: 'project_setup', answers: {} });
-      return reply(ctx, projectSetupPrompt());
+      return reply(ctx, onboardingAwareProjectSetupPrompt());
     }
 
     // start review [optional project name/number]
@@ -590,6 +784,27 @@ export function createBot() {
   return { bot, sendReviewForProject };
 }
 
+// --- Company/team onboarding ---
+
+async function handleOnboarding(ctx) {
+  const userId = String(ctx.from.id);
+  const text = ctx.message.text.trim();
+
+  if (/^(cancel|stop)$/i.test(text)) {
+    sessions.delete(userId);
+    return reply(ctx, 'Onboarding cancelled. Send "setup company" when you are ready.');
+  }
+
+  const { profile, members, errors } = parseOnboardingSetup(text);
+  if (errors.length) {
+    return reply(ctx, `Please fix the onboarding details:\n${errors.map((e) => `- ${e}`).join('\n')}\n\n${onboardingPrompt()}`);
+  }
+
+  saveOnboardingSetup(profile, members);
+  sessions.delete(userId);
+  return reply(ctx, onboardingSummary(profile, members));
+}
+
 // --- Create project ---
 
 async function handleCreateProject(ctx, state) {
@@ -599,7 +814,7 @@ async function handleCreateProject(ctx, state) {
   if (state.step === 'project_setup') {
     const answers = parseLabeledProjectSetup(text);
     const missing = missingProjectSetupFields(answers);
-    if (missing.length) return reply(ctx, `I need these fields: ${missing.join(', ')}.\n\n${projectSetupPrompt()}`);
+    if (missing.length) return reply(ctx, `I need these fields: ${missing.join(', ')}.\n\n${onboardingAwareProjectSetupPrompt()}`);
 
     const { members, missing: missingMembers, roster } = parseTeamMemberNames(answers.team_members_text);
     if (missingMembers.length) return reply(ctx, `Could not find: ${missingMembers.join(', ')}\n\nAvailable: ${roster.map((m) => m.name).join(', ')}`);

@@ -7,6 +7,8 @@ node --check src/bot.js
 node --check src/server.js
 echo "--- cadence tests ---"
 npm run test:cadence
+echo "--- onboarding tests ---"
+npm run test:onboarding
 echo "--- dashboard tests ---"
 npm run test:dashboard
 echo "--- smoke test ---"
