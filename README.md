@@ -108,11 +108,12 @@ Manual roster format in `data/team_members.json`:
 ]
 ```
 
-Each reviewer must open the Telegram bot and send `/start` once before the bot can DM them.
+Every team member needs a numeric `telegram_user_id`. Each reviewer must open the Telegram bot and send `/start` once before the bot can DM them. The bot only responds to the configured tech lead and saved team-member Telegram IDs.
 
 ## Telegram commands
 
 Only `TECH_LEAD_USER_ID` can use project-control commands.
+Team members can only use `/start` or respond to review prompts.
 
 ```text
 /start
@@ -158,6 +159,16 @@ npx localtunnel --port 3000
 # or
 ngrok http 3000
 ```
+
+## Scheduled reviews
+
+Scheduled review timing is owned by the running Node process. When OpenClaw deploys this skill, start the app as a persistent process so `src/scheduler.js` can load `cron_jobs`, run due reviews, and reconcile missed jobs every minute:
+
+```bash
+pm2 start ecosystem.config.cjs
+```
+
+Do not rely on a one-off `npm start` command for scheduled production reviews unless the terminal will stay open.
 
 ## Validation
 

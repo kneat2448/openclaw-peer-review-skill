@@ -290,6 +290,10 @@ function roleCriticality(role) {
   return /operations|sde 2|lead|manager/i.test(role) ? 'high' : 'medium';
 }
 
+function hasNumericTelegramId(member) {
+  return /^\d+$/.test(String(member?.telegram_user_id || ''));
+}
+
 function loadCompanyProfile() {
   return readJsonFile(companyProfilePath, null);
 }
@@ -297,7 +301,16 @@ function loadCompanyProfile() {
 function onboardingComplete() {
   const profile = loadCompanyProfile();
   const roster = loadSavedTeamMembers();
-  return Boolean(profile?.company_name && profile?.team_name && roster?.length);
+  return Boolean(profile?.company_name && profile?.team_name && roster?.length && roster.every(hasNumericTelegramId));
+}
+
+function rosterMemberForUser(userId) {
+  const roster = loadSavedTeamMembers() || [];
+  return roster.find((member) => String(member.telegram_user_id) === String(userId)) || null;
+}
+
+function isAllowedUser(userId) {
+  return isTechLead(userId) || Boolean(rosterMemberForUser(userId));
 }
 
 function onboardingPrompt() {
@@ -311,8 +324,8 @@ Company size:
 Team name:
 Default review cadence: end
 Team members:
-- Name | Role | Years experience | Telegram user ID optional | Responsibilities optional
-- Name | Role | Years experience | Telegram user ID optional | Responsibilities optional
+- Name | Role | Years experience | Telegram user ID | Responsibilities optional
+- Name | Role | Years experience | Telegram user ID | Responsibilities optional
 
 Example:
 Company name: Acme Labs
@@ -322,27 +335,28 @@ Team name: Platform
 Default review cadence: halfway and end
 Team members:
 - Asha Rao | SDE 2 | 3 | 123456789 | Backend delivery and code reviews
-- Karan Mehta | Operations | 4 | | Release coordination
+- Karan Mehta | Operations | 4 | 987654321 | Release coordination
 
-Each Telegram user ID is optional, but reviewers must have one and must send /start to this bot before reviews can be delivered.`;
+Telegram user IDs are required. Each team member must send /start to this bot once before reviews can be delivered.`;
 }
 
 function parseOnboardingMember(line) {
   const cleaned = line.replace(/^[-*]\s*/, '').trim();
   if (!cleaned) return null;
   const parts = cleaned.split('|').map((part) => part.trim());
-  if (parts.length < 3) return { error: `Use: Name | Role | Years | Telegram ID optional | Responsibilities optional (${cleaned})` };
+  if (parts.length < 4) return { error: `Use: Name | Role | Years | Telegram ID | Responsibilities optional (${cleaned})` };
 
   const [name, role, yearsText, telegramUserId, responsibilities] = parts;
   const yearsMatch = String(yearsText || '').match(/\d+(?:\.\d+)?/);
   if (!name || !role || !yearsMatch) return { error: `Missing name, role, or years for: ${cleaned}` };
+  if (!/^\d+$/.test(String(telegramUserId || ''))) return { error: `Telegram user ID must be numeric for: ${name}` };
 
   const member = {
     name,
     role,
-    experience_years: Number(yearsMatch[0])
+    experience_years: Number(yearsMatch[0]),
+    telegram_user_id: telegramUserId
   };
-  if (telegramUserId && /^\d+$/.test(telegramUserId)) member.telegram_user_id = telegramUserId;
   if (responsibilities) member.expected_responsibilities = responsibilities;
   return { member };
 }
@@ -458,7 +472,7 @@ function insertTeamMembers(projectId, members) {
     const years = Number(member.experience_years || 0);
     insert.run(
       projectId,
-      member.telegram_user_id ? String(member.telegram_user_id) : `member:${projectId}:${index + 1}`,
+      String(member.telegram_user_id),
       member.name, member.role,
       roleLevelFromExperience(years),
       roleCriticality(member.role),
@@ -549,7 +563,7 @@ function reviewStatusText(projectId) {
   const members = db.prepare('SELECT * FROM team_members WHERE project_id = ?').all(projectId);
   const responses = db.prepare('SELECT DISTINCT reviewer_user_id FROM responses WHERE project_id = ?').all(projectId);
   const submittedIds = new Set(responses.map((r) => r.reviewer_user_id));
-  const realReviewers = members.filter((m) => !m.telegram_user_id.startsWith('member:'));
+  const realReviewers = members.filter(hasNumericTelegramId);
 
   const lines = [`${project.project_name} — ${project.status}\n`];
   lines.push('Reviewer status:');
@@ -580,23 +594,26 @@ export function createBot() {
     const project = db.prepare('SELECT * FROM projects WHERE project_id = ?').get(projectId);
     if (!project) return;
     const members = db.prepare('SELECT * FROM team_members WHERE project_id = ?').all(projectId);
+    const missingTelegramIds = members.filter((member) => !hasNumericTelegramId(member));
+    if (missingTelegramIds.length) {
+      const names = missingTelegramIds.map((member) => member.name).join(', ');
+      const message = `Review not started for ${project.project_name}. These team members need numeric Telegram IDs: ${names}.\n\nSend "setup company" to update the roster.`;
+      await bot.api.sendMessage(String(process.env.TECH_LEAD_USER_ID), message).catch((err) => {
+        console.error('Could not notify tech lead about missing Telegram IDs:', err);
+      });
+      throw new Error(message);
+    }
+
     const session = db.prepare(`
       INSERT INTO review_sessions (project_id, review_date, status, sent_at)
       VALUES (?, ?, 'sent', ?)
     `).run(projectId, nowIso(), nowIso());
 
-    const realReviewers = members.filter((m) => !m.telegram_user_id.startsWith('member:'));
-    const reviewerJobs = realReviewers.length
-      ? realReviewers.map((reviewer) => ({
-          reviewer,
-          reviewerUserId: String(reviewer.telegram_user_id),
-          reviewees: members.filter((m) => m.telegram_user_id !== reviewer.telegram_user_id)
-        }))
-      : [{
-          reviewer: { name: 'Tech Lead' },
-          reviewerUserId: String(project.owner_user_id),
-          reviewees: members
-        }];
+    const reviewerJobs = members.map((reviewer) => ({
+      reviewer,
+      reviewerUserId: String(reviewer.telegram_user_id),
+      reviewees: members.filter((m) => m.telegram_user_id !== reviewer.telegram_user_id)
+    }));
 
     const failed = [];
     for (const job of reviewerJobs) {
@@ -668,7 +685,11 @@ export function createBot() {
 
   bot.command('start', async (ctx) => {
     const userId = ctx.from?.id;
-    if (!isTechLead(userId)) return reply(ctx, 'This MVP only accepts project-control commands from the configured tech lead.');
+    if (!isAllowedUser(userId)) return;
+    if (!isTechLead(userId)) {
+      const member = rosterMemberForUser(userId);
+      return reply(ctx, `Hi ${member.name}. You are registered for peer reviews. I will message you here when a review is assigned.`);
+    }
     if (!onboardingComplete()) {
       sessions.set(String(userId), { mode: 'onboarding', step: 'company_setup' });
       return reply(ctx, onboardingPrompt());
@@ -678,7 +699,11 @@ export function createBot() {
 
   bot.command('help', async (ctx) => {
     const userId = ctx.from?.id;
-    if (!isTechLead(userId)) return reply(ctx, 'This MVP only accepts project-control commands from the configured tech lead.');
+    if (!isAllowedUser(userId)) return;
+    if (!isTechLead(userId)) {
+      const member = rosterMemberForUser(userId);
+      return reply(ctx, `Hi ${member.name}. Reply to review prompts here when they arrive.`);
+    }
     return reply(ctx, 'Peer Review MVP ready.\n\nCommands:\n- create project\n- setup company\n- company profile\n- start review [project name or number]\n- analyze reviews [project name or number]\n- dashboard [project name or number]\n- status [project name or number]\n- projects');
   });
 
@@ -696,9 +721,8 @@ export function createBot() {
     if (state?.mode === 'onboarding') return handleOnboarding(ctx);
     if (state?.mode === 'create_project') return handleCreateProject(ctx, state);
 
-    if (!isTechLead(userId)) {
-      return reply(ctx, 'This MVP is currently limited to the configured tech lead.');
-    }
+    if (!isAllowedUser(userId)) return;
+    if (!isTechLead(userId)) return reply(ctx, 'You are registered for peer reviews. I will message you when a review is assigned.');
 
     if (!onboardingComplete() && !['setup company', 'company setup', 'team setup', 'onboarding', 'company profile'].includes(lower)) {
       sessions.set(userId, { mode: 'onboarding', step: 'company_setup' });

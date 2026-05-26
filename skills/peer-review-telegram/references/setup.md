@@ -93,7 +93,7 @@ Manual edit format for `data/team_members.json`:
 ```
 
 Each member must open the bot and send `/start` at least once before the bot can DM them.
-Members without `telegram_user_id` get a placeholder ID — the tech lead receives their review instead.
+Every member must have a numeric `telegram_user_id`. The bot only responds to the configured tech lead and saved team-member Telegram IDs.
 
 ---
 
@@ -154,6 +154,8 @@ pm2 restart peer-review-bot
 pm2 stop peer-review-bot
 pm2 delete peer-review-bot
 ```
+
+OpenClaw scheduling note: use a persistent process for this skill. `src/scheduler.js` loads review jobs from SQLite, sets timers for future runs, and starts a once-per-minute cron reconciliation for missed due jobs. `pm2 start ecosystem.config.cjs` is the recommended way for the OpenClaw agent to keep scheduled review timing alive.
 
 Expected startup logs:
 
@@ -263,7 +265,7 @@ Check:
 
 ### Team members not receiving reviews
 
-- Add real `telegram_user_id` to `data/team_members.json`.
+- Add numeric `telegram_user_id` values to every member in `data/team_members.json` or rerun `setup company`.
 - Ask each user to open the bot and send `/start` once.
 - Check `review_send_log` table for error messages:
 

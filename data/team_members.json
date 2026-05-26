@@ -2,21 +2,25 @@
   {
     "name": "Nitai",
     "role": "Intern",
-    "experience_years": 0
+    "experience_years": 0,
+    "telegram_user_id": "111111111"
   },
   {
     "name": "Deepak",
     "role": "SDE 1",
-    "experience_years": 2
+    "experience_years": 2,
+    "telegram_user_id": "222222222"
   },
   {
     "name": "Vatsal",
     "role": "SDE 2",
-    "experience_years": 3
+    "experience_years": 3,
+    "telegram_user_id": "333333333"
   },
   {
     "name": "Aditi",
     "role": "Operations",
-    "experience_years": 4
+    "experience_years": 4,
+    "telegram_user_id": "444444444"
   }
 ]

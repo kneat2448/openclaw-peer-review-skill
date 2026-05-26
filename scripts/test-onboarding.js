@@ -9,7 +9,7 @@ Team name: Platform
 Default review cadence: halfway and end
 Team members:
 - Asha Rao | SDE 2 | 3 | 123456789 | Backend delivery and code reviews
-- Karan Mehta | Operations | 4 | | Release coordination
+- Karan Mehta | Operations | 4 | 987654321 | Release coordination
 `;
 
 const parsed = parseOnboardingSetup(input);
@@ -20,12 +20,21 @@ assert.equal(parsed.profile.team_name, 'Platform');
 assert.equal(parsed.profile.default_review_cadence, 'halfway and end');
 assert.equal(parsed.members.length, 2);
 assert.equal(parsed.members[0].telegram_user_id, '123456789');
-assert.equal(parsed.members[1].telegram_user_id, undefined);
+assert.equal(parsed.members[1].telegram_user_id, '987654321');
 assert.equal(parsed.members[1].expected_responsibilities, 'Release coordination');
 
 const invalid = parseOnboardingSetup('Company name: Missing Team');
 assert.ok(invalid.errors.includes('Industry'));
 assert.ok(invalid.errors.includes('Team name'));
 assert.ok(invalid.errors.includes('Team members'));
+
+const missingTelegramId = parseOnboardingSetup(`
+Company name: Acme Labs
+Industry: SaaS
+Team name: Platform
+Team members:
+- No Id | SDE 1 | 2 | | Delivery
+`);
+assert.ok(missingTelegramId.errors.some((error) => error.includes('Telegram user ID must be numeric')));
 
 console.log('Onboarding tests passed');

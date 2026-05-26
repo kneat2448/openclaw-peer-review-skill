@@ -99,7 +99,8 @@ All commands that take a project accept: project name (partial match), project n
 ## Key behaviors
 
 - **Session persistence**: reviewer sessions stored in `reviewer_sessions` DB table — survive process restarts.
-- **First-run onboarding**: `/start` prompts the tech lead for company info and team roster when setup is missing.
+- **First-run onboarding**: `/start` prompts the tech lead for company info and a team roster with required numeric Telegram IDs.
+- **Access control**: the bot only responds to the tech lead and saved team-member Telegram IDs; team members can register with `/start` and answer review prompts.
 - **Send failure handling**: per-reviewer try/catch; failures logged to `review_send_log`; tech lead notified of unreachable members.
 - **Multi-project**: all commands accept project name or number; `projects` lists all.
 - **Partial answer preservation**: on validation failure, valid answers pre-fill the re-sent questionnaire.
@@ -108,7 +109,11 @@ All commands that take a project accept: project name (partial match), project n
 - **Score tolerance**: accepts `8`, `7.5`, `8/10`, `7.5/10`, `8 out of 10`.
 - **Empty response display**: members with 0 responses show "No responses" on dashboard instead of `0/10`. Risk shows `Unknown`.
 - **Sensitive data isolation**: contracts/offers/terms stored in `project_sensitive_data`, excluded from analysis and dashboard.
-- **Placeholder IDs**: members without `telegram_user_id` get `member:<projectId>:N` — tech lead receives their review instead.
+- **Required Telegram IDs**: reviews are sent directly to team members; if a project roster contains missing/invalid Telegram IDs, review sending stops and the tech lead is told to rerun `setup company`.
+
+## OpenClaw scheduling
+
+Scheduled reviews depend on the long-running app process. When operating this skill under OpenClaw, start or keep alive `npm start` through `pm2 start ecosystem.config.cjs`; `src/scheduler.js` loads scheduled jobs from SQLite, uses timers for future jobs, and runs a once-per-minute cron reconciliation for missed due jobs.
 
 ## DB tables
 
