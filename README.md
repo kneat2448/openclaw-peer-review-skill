@@ -222,6 +222,11 @@ It includes:
 - `references/setup.md` — migration, setup, GitHub, and troubleshooting instructions
 - `scripts/validate-app.sh` — app validation helper
 
+For OpenClaw subagent handoff, also read:
+
+- `subagent.manifest.json` - machine-readable OpenClaw subagent contract
+- `references/subagent.md` - human-readable OpenClaw subagent runbook
+
 To migrate this feature into another OpenClaw instance, copy or clone this repo, then ensure `skills/peer-review-telegram/` is present in the workspace.
 
 ## Security and privacy

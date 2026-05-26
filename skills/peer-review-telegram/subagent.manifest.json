@@ -1,0 +1,77 @@
+{
+  "schema_version": "1.0",
+  "id": "peer-review-telegram-subagent",
+  "name": "Peer Review Telegram Operator",
+  "description": "Operates the Telegram peer-review bot, SQLite store, scheduled review jobs, and dashboard for an OpenClaw workspace.",
+  "skill": "peer-review-telegram",
+  "workspace_root": ".",
+  "entrypoints": {
+    "start": "npm start",
+    "persistent_start": "pm2 start ecosystem.config.cjs",
+    "restart": "pm2 restart peer-review-bot",
+    "logs": "pm2 logs peer-review-bot",
+    "health": "curl -fsS http://localhost:${PORT:-3000}/",
+    "validate": "bash skills/peer-review-telegram/scripts/validate-app.sh"
+  },
+  "runtime": {
+    "node": ">=20",
+    "package_manager": "npm",
+    "process_manager": "pm2",
+    "service_process": "src/server.js",
+    "scheduler": {
+      "owner": "src/scheduler.js",
+      "persistence": "SQLite cron_jobs table",
+      "reconciliation": "Runs every minute inside the long-running Node process"
+    }
+  },
+  "required_env": [
+    "TELEGRAM_BOT_TOKEN",
+    "TECH_LEAD_USER_ID",
+    "BASE_URL"
+  ],
+  "optional_env": {
+    "PORT": "3000",
+    "DB_PATH": "./data/peer_review.db",
+    "APP_TIME_ZONE": "Asia/Kolkata",
+    "LATER_REMIND_MS": "14400000"
+  },
+  "capabilities": [
+    "install_dependencies",
+    "configure_env",
+    "run_onboarding",
+    "operate_telegram_bot",
+    "schedule_peer_reviews",
+    "analyze_reviews",
+    "serve_dashboard",
+    "inspect_sqlite_state",
+    "debug_send_failures"
+  ],
+  "telegram_access_policy": {
+    "tech_lead": "Can run project-control commands.",
+    "team_members": "Can /start to register and answer assigned review prompts.",
+    "unknown_users": "Ignored by the bot."
+  },
+  "state_files": {
+    "company_profile": "data/company_profile.json",
+    "team_roster": "data/team_members.json",
+    "sqlite_database": "data/peer_review.db",
+    "dashboard_json": "dashboard/public/data/*.json"
+  },
+  "git_excludes": [
+    ".env",
+    "node_modules/",
+    "package-lock.json",
+    "data/company_profile.json",
+    "data/*.db",
+    "data/*.db-wal",
+    "data/*.db-shm",
+    "dashboard/public/data/*.json",
+    "logs/"
+  ],
+  "handoff_docs": [
+    "skills/peer-review-telegram/SKILL.md",
+    "skills/peer-review-telegram/references/setup.md",
+    "skills/peer-review-telegram/references/subagent.md",
+    "README.md"
+  ]
+}

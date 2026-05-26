@@ -224,7 +224,8 @@ npm start
 
 If the new instance has OpenClaw:
 1. Point the OpenClaw workspace root at this cloned repo.
-2. The `skills/peer-review-telegram/` folder is already included — OpenClaw will pick it up.
+2. For subagent delegation, read `skills/peer-review-telegram/subagent.manifest.json` first, then follow `skills/peer-review-telegram/references/subagent.md`.
+3. The `skills/peer-review-telegram/` folder is already included, so OpenClaw will pick it up.
 
 ---
 
