@@ -1,0 +1,22 @@
+[
+  {
+    "name": "Nitai",
+    "role": "Intern",
+    "experience_years": 0
+  },
+  {
+    "name": "Deepak",
+    "role": "SDE 1",
+    "experience_years": 2
+  },
+  {
+    "name": "Vatsal",
+    "role": "SDE 2",
+    "experience_years": 3
+  },
+  {
+    "name": "Aditi",
+    "role": "Operations",
+    "experience_years": 4
+  }
+]

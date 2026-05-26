@@ -1,0 +1,11 @@
+node_modules/
+package-lock.json
+.env
+data/*.db
+data/*.db-wal
+data/*.db-shm
+dashboard/public/data/*.json
+logs/
+npm-debug.log*
+.DS_Store
+*.log
